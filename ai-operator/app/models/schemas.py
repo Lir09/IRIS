@@ -51,6 +51,13 @@ class HealthResponse(BaseModel):
     status: str = "ok"
 
 
+class LLMHealthResponse(HealthResponse):
+    ollama: str
+    model: Optional[str] = None
+    model_available: bool
+    fallback_used: bool
+
+
 # --- Database Models (Pydantic representation) ---
 
 class Approval(BaseModel):

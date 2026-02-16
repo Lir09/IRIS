@@ -1,122 +1,195 @@
-import httpx
 import json
 import os
-import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-# 기본 API 설정
-BASE_URL = "http://127.0.0.1:8000"
-CHAT_ENDPOINT = f"{BASE_URL}/chat"
-APPROVAL_EXECUTE_ENDPOINT = f"{BASE_URL}/approvals/{{approval_id}}/execute"
-HEALTH_ENDPOINT = f"{BASE_URL}/health"
+import httpx
 
-def print_response(response_json: dict):
-    """API 응답을 보기 좋게 출력합니다."""
-    print(f"--- 응답 ---")
-    if "intent" in response_json:
-        print(f"  의도: {response_json.get('intent')}")
-    if "plan" in response_json and response_json["plan"]:
-        print(f"  계획:")
-        for step in response_json["plan"]:
-            print(f"    - {step}")
-    if "requires_approval" in response_json:
-        print(f"  승인 필요: {response_json.get('requires_approval')}")
-    if "proposed_command" in response_json and response_json["proposed_command"]:
-        print(f"  제안된 명령: {response_json.get('proposed_command')}")
-    if "response" in response_json:
-        print(f"  응답 메시지: {response_json.get('response')}")
-    if "run_id" in response_json:
-        print(f"  실행 ID: {response_json.get('run_id')}")
-    if "ok" in response_json:
-        print(f"  성공 여부: {response_json.get('ok')}")
-    if "returncode" in response_json:
-        print(f"  리턴 코드: {response_json.get('returncode')}")
-    if "stdout" in response_json and response_json["stdout"]:
-        print(f"  STDOUT:
-{response_json['stdout']}")
-    if "stderr" in response_json and response_json["stderr"]:
-        print(f"  STDERR:
-{response_json['stderr']}")
-    print(f"------------")
 
-async def chat_loop():
-    """AI Operator와 상호작용하는 CLI 루프입니다."""
-    print("AI Operator CLI 클라이언트에 오신 것을 환영합니다!")
-    print(f"서버 URL: {BASE_URL}")
-    print("종료하려면 'exit' 또는 'quit'을 입력하세요.")
+BASE_URL = os.getenv("AI_OPERATOR_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+CHAT_URL = f"{BASE_URL}/chat"
+APPROVAL_EXEC_URL = f"{BASE_URL}/approvals/{{approval_id}}/execute"
+HEALTH_URL = f"{BASE_URL}/health"
+DEFAULT_SANDBOX_CWD = os.getenv("SANDBOX_ROOT", r"C:\ai-sandbox")
 
-    client = httpx.AsyncClient()
-    current_cwd = os.getcwd() # 클라이언트의 현재 작업 디렉토리
 
-    # 헬스체크
-    try:
-        health_response = await client.get(HEALTH_ENDPOINT)
-        health_response.raise_for_status()
-        health_data = health_response.json()
-        print(f"서버 헬스체크: {health_data.get('status')}")
-        if health_data.get('llm_status'):
-            print(f"LLM 상태: {health_data.get('llm_status')} ({health_data.get('llm_message')})")
-    except httpx.RequestError as e:
-        print(f"서버에 연결할 수 없습니다: {e}. 서버가 {BASE_URL}에서 실행 중인지 확인하세요.")
-        return
+def append_log(log_path: Path, event: str, payload: dict[str, Any]) -> None:
+    row = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "event": event,
+        **payload,
+    }
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    while True:
+
+def print_chat_response(data: dict[str, Any]) -> None:
+    text = data.get("response", "")
+    if text:
+        print(f"IRIS> {text}")
+
+    if data.get("proposed_command"):
+        print(f"[command] {data['proposed_command']}")
+
+
+def print_execution_response(data: dict[str, Any]) -> None:
+    ok = data.get("ok")
+    returncode = data.get("returncode")
+    run_id = data.get("run_id")
+    print(f"[execution] ok={ok} returncode={returncode} run_id={run_id}")
+
+    stdout = data.get("stdout")
+    stderr = data.get("stderr")
+    if stdout:
+        print("[stdout]")
+        print(stdout)
+    if stderr:
+        print("[stderr]")
+        print(stderr)
+
+
+def main() -> None:
+    # Use sandbox as default execution cwd so policy checks pass by default.
+    current_cwd = DEFAULT_SANDBOX_CWD
+    if not Path(current_cwd).exists():
+        current_cwd = os.getcwd()
+    logs_dir = Path(__file__).resolve().parent / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = logs_dir / f"chat-{session_id}.jsonl"
+
+    print("IRIS CLI chat")
+    print(f"Server: {BASE_URL}")
+    print(f"Log: {log_path}")
+    print("Type /exit to quit. Type /help for commands.")
+    append_log(
+        log_path,
+        "session_start",
+        {
+            "base_url": BASE_URL,
+            "cwd": current_cwd,
+            "session_id": session_id,
+        },
+    )
+
+    with httpx.Client(timeout=120.0) as client:
         try:
-            message = input(f"
-({current_cwd}) 당신: ")
-            if message.lower() in ["exit", "quit"]:
-                print("CLI 클라이언트를 종료합니다.")
+            health = client.get(HEALTH_URL)
+            health.raise_for_status()
+            print("[connected] /health OK")
+            append_log(log_path, "health_ok", {"status_code": health.status_code})
+        except Exception as exc:
+            print(f"[error] Server is not reachable: {exc}")
+            append_log(log_path, "health_error", {"error": str(exc)})
+            return
+
+        while True:
+            try:
+                message = input("You> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nBye.")
                 break
 
-            # chat 요청
-            chat_payload = {
-                "message": message,
-                "cwd": current_cwd
-            }
-            response = await client.post(CHAT_ENDPOINT, json=chat_payload)
-            response.raise_for_status()
-            chat_response = response.json()
-            
-            print_response(chat_response)
+            if not message:
+                continue
 
-            # 승인 필요 여부 확인
-            if chat_response.get("requires_approval") and chat_response.get("approval_id"):
-                approval_id = chat_response["approval_id"]
-                proposed_command = chat_response.get("proposed_command", "알 수 없는 명령")
-                
-                confirm = input(f"제안된 명령 '{proposed_command}'을(를) 실행하시겠습니까? (y/N): ").lower()
-                if confirm == 'y':
-                    print(f"'{approval_id}' 승인 요청 실행 중...")
-                    execute_url = APPROVAL_EXECUTE_ENDPOINT.format(approval_id=approval_id)
-                    execute_response = await client.post(execute_url)
-                    execute_response.raise_for_status()
-                    execute_result = execute_response.json()
-                    print_response(execute_result)
-                else:
-                    print("명령 실행을 취소했습니다.")
-            
-            # cwd 변경 요청 처리 (LLM이 제안할 경우)
-            if chat_response.get("intent") == "system_task" and chat_response.get("proposed_command", "").lower().strip().startswith("cd "):
-                new_path = chat_response["proposed_command"].split(" ", 1)[1].strip()
+            if message in {"/exit", "/quit"}:
+                print("Bye.")
+                append_log(log_path, "session_end", {"reason": "user_exit"})
+                break
+
+            if message == "/help":
+                print("Commands:")
+                print("/help - show this help")
+                print("/exit - quit")
+                print("/cwd  - show current cwd sent to server")
+                print("/sandbox - set cwd to SANDBOX_ROOT")
+                print("/log  - show current log file")
+                continue
+
+            if message == "/cwd":
+                print(f"cwd: {current_cwd}")
+                continue
+
+            if message == "/log":
+                print(f"log: {log_path}")
+                continue
+
+            if message == "/sandbox":
+                current_cwd = DEFAULT_SANDBOX_CWD
+                print(f"cwd set to sandbox: {current_cwd}")
+                append_log(log_path, "cwd_changed", {"cwd": current_cwd, "mode": "sandbox"})
+                continue
+
+            payload = {"message": message, "cwd": current_cwd}
+            append_log(log_path, "user_message", payload)
+
+            try:
+                chat_resp = client.post(CHAT_URL, json=payload)
+                chat_resp.raise_for_status()
+                chat_data = chat_resp.json()
+            except json.JSONDecodeError:
+                print("[error] Chat response was not valid JSON.")
+                append_log(
+                    log_path,
+                    "chat_error",
+                    {"error": "invalid_json", "status_code": chat_resp.status_code},
+                )
+                continue
+            except Exception as exc:
+                print(f"[error] Chat request failed: {exc}")
+                append_log(log_path, "chat_error", {"error": str(exc)})
+                continue
+
+            print_chat_response(chat_data)
+            append_log(log_path, "assistant_response", chat_data)
+
+            if chat_data.get("requires_approval") and chat_data.get("approval_id"):
+                approval_id = chat_data["approval_id"]
+                confirm = input("Run this command? [y/N] ").strip().lower()
+                append_log(
+                    log_path,
+                    "approval_prompt",
+                    {
+                        "approval_id": approval_id,
+                        "proposed_command": chat_data.get("proposed_command"),
+                        "user_confirm": confirm == "y",
+                    },
+                )
+                if confirm != "y":
+                    print("[skipped] command not executed")
+                    continue
+
+                exec_url = APPROVAL_EXEC_URL.format(approval_id=approval_id)
                 try:
-                    if os.path.isabs(new_path):
-                        os.chdir(new_path)
-                    else:
-                        os.chdir(os.path.join(current_cwd, new_path))
-                    current_cwd = os.getcwd()
-                    print(f"작업 디렉토리를 '{current_cwd}'(으)로 변경했습니다.")
-                except OSError as e:
-                    print(f"오류: 디렉토리를 변경할 수 없습니다. {e}")
+                    exec_resp = client.post(exec_url)
+                    exec_resp.raise_for_status()
+                    exec_data = exec_resp.json()
+                except json.JSONDecodeError:
+                    print("[error] Execute response was not valid JSON.")
+                    append_log(
+                        log_path,
+                        "execute_error",
+                        {"error": "invalid_json", "approval_id": approval_id},
+                    )
+                    continue
+                except Exception as exc:
+                    print(f"[error] Execute request failed: {exc}")
+                    append_log(
+                        log_path,
+                        "execute_error",
+                        {"error": str(exc), "approval_id": approval_id},
+                    )
+                    continue
 
+                print_execution_response(exec_data)
+                append_log(
+                    log_path,
+                    "execution_result",
+                    {"approval_id": approval_id, **exec_data},
+                )
 
-        except httpx.RequestError as e:
-            print(f"API 요청 중 오류 발생: {e}. 서버가 실행 중인지 확인하세요.")
-        except json.JSONDecodeError:
-            print(f"API 응답 파싱 중 오류 발생: {response.text}")
-        except Exception as e:
-            print(f"예상치 못한 오류 발생: {e}")
-
-    await client.aclose()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(chat_loop())
+    main()

@@ -44,3 +44,30 @@ def test_no_cwd_provided(policy_enforcer):
     is_allowed, reason = policy_enforcer.check_all("git status", None)
     assert is_allowed is False
     assert "must be provided" in reason
+
+
+def test_allow_file_write_command_in_sandbox(policy_enforcer):
+    is_allowed, reason = policy_enforcer.check_all(
+        'echo hello > greeting.txt',
+        policy_enforcer.sandbox_root,
+    )
+    assert is_allowed is True
+    assert "allowed" in reason
+
+
+def test_block_absolute_path_in_command(policy_enforcer):
+    is_allowed, reason = policy_enforcer.check_all(
+        r'echo hello > C:\Users\gbin8\Desktop\greeting.txt',
+        policy_enforcer.sandbox_root,
+    )
+    assert is_allowed is False
+    assert "disallowed path pattern" in reason
+
+
+def test_block_parent_traversal_in_command(policy_enforcer):
+    is_allowed, reason = policy_enforcer.check_all(
+        r'echo hello > ..\outside.txt',
+        policy_enforcer.sandbox_root,
+    )
+    assert is_allowed is False
+    assert "disallowed path pattern" in reason

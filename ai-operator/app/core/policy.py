@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
@@ -16,7 +17,19 @@ ALLOWED_COMMAND_PREFIXES = [
     "python -m pytest",
     "docker ps",
     "dir",
-    "ls", # Adding ls for user convenience
+    "ls",  # Adding ls for user convenience
+    # Safe-by-default file creation/edit commands (restricted by sandbox checks below)
+    "echo ",
+    "set-content ",
+    "out-file ",
+    "new-item ",
+]
+
+# Block common sandbox-escape patterns in command arguments.
+DISALLOWED_COMMAND_PATTERNS = [
+    re.compile(r"[a-zA-Z]:\\"),
+    re.compile(r"\\\\"),
+    re.compile(r"\.\."),
 ]
 
 class PolicyEnforcer:
@@ -40,11 +53,25 @@ class PolicyEnforcer:
 
     def is_command_allowed(self, command: str) -> bool:
         """Checks if the command matches any of the allowed prefixes."""
-        normalized_command = command.strip()
+        normalized_command = command.strip().lower()
         for prefix in self.allowed_prefixes:
-            if normalized_command.startswith(prefix):
+            if normalized_command.startswith(prefix.lower()):
                 return True
         logger.warning(f"Command denied by policy (not in whitelist): '{command}'")
+        return False
+
+    def has_disallowed_command_pattern(self, command: str) -> bool:
+        """
+        Checks command string for absolute/traversal path patterns that could escape sandbox.
+        """
+        normalized_command = command.strip()
+        for pattern in DISALLOWED_COMMAND_PATTERNS:
+            if pattern.search(normalized_command):
+                logger.warning(
+                    "Command denied by policy (disallowed path pattern): "
+                    f"pattern='{pattern.pattern}' command='{command}'"
+                )
+                return True
         return False
 
     def is_path_in_sandbox(self, cwd: str | Path) -> bool:
@@ -70,5 +97,8 @@ class PolicyEnforcer:
 
         if not self.is_command_allowed(command):
             return False, "Command is not in the allowed list."
+
+        if self.has_disallowed_command_pattern(command):
+            return False, "Command contains a disallowed path pattern (outside-sandbox risk)."
 
         return True, "Command is allowed."

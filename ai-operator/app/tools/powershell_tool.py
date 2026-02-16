@@ -49,12 +49,10 @@ class PowerShellTool:
             stderr = process.stderr
 
             if len(stdout) > MAX_OUTPUT_CHARS:
-                stdout = f"[... TRUNCATED ...]
-{stdout[-MAX_OUTPUT_CHARS:]}"
+                stdout = f"[... TRUNCATED ...]\n{stdout[-MAX_OUTPUT_CHARS:]}"
             
             if len(stderr) > MAX_OUTPUT_CHARS:
-                stderr = f"[... TRUNCATED ...]
-{stderr[-MAX_OUTPUT_CHARS:]}"
+                stderr = f"[... TRUNCATED ...]\n{stderr[-MAX_OUTPUT_CHARS:]}"
 
             ok = process.returncode == 0
             if not ok:
@@ -91,3 +89,5 @@ class PowerShellTool:
                 "stderr": f"An unexpected error occurred: {str(e)}",
                 "ok": False,
             }
+
+

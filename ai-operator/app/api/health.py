@@ -1,21 +1,20 @@
 from fastapi import APIRouter
-from app.models.schemas import HealthResponse
+from app.models.schemas import LLMHealthResponse
 from app.llm.client import ollama_client
 
 router = APIRouter()
-
-class LLMHealthResponse(HealthResponse):
-    llm_status: str
-    llm_message: str
 
 @router.get("/health", tags=["System"], response_model=LLMHealthResponse)
 def health_check():
     """
     Performs a health check of the application, including LLM connectivity.
     """
-    ollama_health = ollama_client.check_ollama_status()
+    detection = ollama_client.get_detection_status(refresh=True)
+    ollama_state = "up" if detection.ollama_up else "down"
     return LLMHealthResponse(
         status="ok",
-        llm_status=ollama_health["status"],
-        llm_message=ollama_health["message"]
+        ollama=ollama_state,
+        model=detection.selected_model,
+        model_available=detection.model_available,
+        fallback_used=detection.fallback_used,
     )

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.policy import SANDBOX_ROOT
 from app.models.schemas import Intent
-from app.llm.client import OllamaConnectionError
+from app.llm.client import ollama_client
 import pytest
 import respx
 import httpx
@@ -17,7 +17,10 @@ client = TestClient(app)
 def mock_ollama_client_responses():
     with respx.mock:
         # Default mock for health check (Ollama OK)
-        respx.get("http://localhost:11434/api/tags").mock(return_value=httpx.Response(200, json={"models": [{"name": "llama3.1:8b-instruct"}]}))
+        respx.get("http://localhost:11434/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "gpt-oss:20b"}]})
+        )
+        ollama_client.refresh_detection()
 
         # Default mock for chat (general chat)
         respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, json={

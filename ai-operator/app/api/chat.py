@@ -7,7 +7,7 @@ from app.core.policy import PolicyEnforcer
 from app.db.database import get_db
 from app.db.repositories import ApprovalRepository
 from app.models.schemas import ChatRequest, ChatResponse, Approval, Intent
-from app.llm.client import OllamaConnectionError
+from app.llm.client import OllamaConnectionError, OllamaModelUnavailableError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -23,13 +23,20 @@ async def post_chat_message(request: ChatRequest, db: Session = Depends(get_db))
     If the intent is a system task, it creates an approval request.
     """
     try:
-        intent, plan, proposed_command = intent_router.classify_intent(request)
+        intent, plan, proposed_command, llm_response_text = intent_router.classify_intent(request)
     except OllamaConnectionError as e:
         logger.error(f"Failed to connect to Ollama: {e}")
         return ChatResponse(
             intent=Intent.CHAT, # Default to chat for safety
             plan=["Failed to connect to LLM."],
             response="I'm sorry, I cannot connect to the local LLM at the moment. Please ensure Ollama is running and the model is pulled."
+        )
+    except OllamaModelUnavailableError as e:
+        logger.error(f"Ollama model unavailable: {e}")
+        return ChatResponse(
+            intent=Intent.CHAT,
+            plan=["LLM model is unavailable."],
+            response="I'm sorry, the required Ollama model is not installed. Please run: ollama pull gpt-oss:20b"
         )
     except Exception as e:
         logger.error(f"An unexpected error occurred during intent classification: {e}")
@@ -82,16 +89,23 @@ async def post_chat_message(request: ChatRequest, db: Session = Depends(get_db))
 
     # --- Handle Code Help Intent ---
     if intent == Intent.CODE_HELP:
-        # In a full implementation, you'd use LLM again for the actual code help response
+        final_response = llm_response_text or (
+            f"This is the response for code help, based on your request: "
+            f"'{request.message}'. Plan: {', '.join(plan)}"
+        )
         return ChatResponse(
             intent=intent,
             plan=plan,
-            response=f"This is the response for code help, based on your request: '{request.message}'. Plan: {', '.join(plan)}"
+            response=final_response,
         )
 
     # --- Handle General Chat Intent ---
+    final_response = llm_response_text or (
+        f"This is a general chat response from the LLM, based on your request: "
+        f"'{request.message}'. Plan: {', '.join(plan)}"
+    )
     return ChatResponse(
         intent=intent,
         plan=plan,
-        response=f"This is a general chat response from the LLM, based on your request: '{request.message}'. Plan: {', '.join(plan)}"
+        response=final_response,
     )
