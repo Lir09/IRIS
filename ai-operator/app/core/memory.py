@@ -1,16 +1,39 @@
-# In a more advanced version, this module would handle conversation history,
-# context management, and potentially connect to a vector database for RAG.
+from __future__ import annotations
 
-class Memory:
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from threading import Lock
+from typing import Deque
+
+
+@dataclass(frozen=True)
+class MemoryEntry:
+    role: str
+    content: str
+
+
+class ConversationMemory:
     """
-    A placeholder for future memory capabilities.
-    For the MVP, all state is handled via the database repositories.
+    In-memory session conversation store.
+    Keeps a bounded number of recent messages per session.
     """
-    def __init__(self):
-        self.history = []
 
-    def add_entry(self, entry: dict):
-        self.history.append(entry)
+    def __init__(self, max_messages_per_session: int = 20):
+        self.max_messages_per_session = max_messages_per_session
+        self._store: dict[str, Deque[MemoryEntry]] = defaultdict(
+            lambda: deque(maxlen=self.max_messages_per_session)
+        )
+        self._lock = Lock()
 
-    def get_history(self):
-        return self.history
+    def add_message(self, session_id: str, role: str, content: str) -> None:
+        if not session_id or not content:
+            return
+        with self._lock:
+            self._store[session_id].append(MemoryEntry(role=role, content=content))
+
+    def get_history(self, session_id: str) -> list[MemoryEntry]:
+        if not session_id:
+            return []
+        with self._lock:
+            return list(self._store.get(session_id, []))
+

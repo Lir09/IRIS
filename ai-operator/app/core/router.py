@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+from app.core.memory import MemoryEntry
 from app.models.schemas import Intent, ChatRequest, ChatResponse
 from app.llm.client import ollama_client, OllamaConnectionError, OllamaModelUnavailableError
 from app.llm.prompts import SYSTEM_PROMPT
@@ -42,12 +43,24 @@ class IntentRouter:
     """
     Determines the user's intent from their message using an LLM.
     """
-    def classify_intent(self, request: ChatRequest) -> tuple[Intent, list[str], str | None, str | None]:
+    def classify_intent(
+        self,
+        request: ChatRequest,
+        history: list[MemoryEntry] | None = None,
+    ) -> tuple[Intent, list[str], str | None, str | None]:
         """
         Classifies intent, generates a plan, and extracts structured response fields using Ollama.
         Returns: (intent, plan, proposed_command, response_text)
         """
-        user_message_content = f"User: {request.message}"
+        user_message_content = ""
+        if history:
+            history_lines = []
+            for entry in history[-10:]:
+                role = "User" if entry.role.lower() == "user" else "Assistant"
+                history_lines.append(f"{role}: {entry.content}")
+            user_message_content += "Conversation history:\n" + "\n".join(history_lines) + "\n\n"
+
+        user_message_content += f"User: {request.message}"
         if request.cwd:
             user_message_content += f"\nCurrent Working Directory: {request.cwd}"
 

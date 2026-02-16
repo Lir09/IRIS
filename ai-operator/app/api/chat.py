@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.router import IntentRouter
 from app.core.policy import PolicyEnforcer
+from app.core.memory import ConversationMemory
 from app.db.database import get_db
 from app.db.repositories import ApprovalRepository
 from app.models.schemas import ChatRequest, ChatResponse, Approval, Intent
@@ -14,6 +15,24 @@ logger = logging.getLogger(__name__)
 
 intent_router = IntentRouter()
 policy_enforcer = PolicyEnforcer()
+conversation_memory = ConversationMemory()
+
+
+def _enforce_identity_response(user_message: str, response_text: str) -> str:
+    """
+    Keeps creator identity consistent for direct identity questions.
+    """
+    message = user_message.lower()
+    identity_query_tokens = [
+        "누가 만들",
+        "누가 개발",
+        "who made",
+        "who created",
+        "who built",
+    ]
+    if any(token in message for token in identity_query_tokens):
+        return "저는 김가빈님이 만든 로컬 AI 운영자 IRIS입니다."
+    return response_text
 
 
 @router.post("/chat", tags=["Chat"], response_model=ChatResponse)
@@ -22,8 +41,14 @@ async def post_chat_message(request: ChatRequest, db: Session = Depends(get_db))
     Receives a natural language message, determines intent, and responds using Ollama.
     If the intent is a system task, it creates an approval request.
     """
+    session_id = request.session_id or "default"
+    history = conversation_memory.get_history(session_id)
+
     try:
-        intent, plan, proposed_command, llm_response_text = intent_router.classify_intent(request)
+        intent, plan, proposed_command, llm_response_text = intent_router.classify_intent(
+            request,
+            history=history,
+        )
     except OllamaConnectionError as e:
         logger.error(f"Failed to connect to Ollama: {e}")
         return ChatResponse(
@@ -93,19 +118,27 @@ async def post_chat_message(request: ChatRequest, db: Session = Depends(get_db))
             f"This is the response for code help, based on your request: "
             f"'{request.message}'. Plan: {', '.join(plan)}"
         )
-        return ChatResponse(
+        final_response = _enforce_identity_response(request.message, final_response)
+        response_obj = ChatResponse(
             intent=intent,
             plan=plan,
             response=final_response,
         )
+        conversation_memory.add_message(session_id, "user", request.message)
+        conversation_memory.add_message(session_id, "assistant", response_obj.response)
+        return response_obj
 
     # --- Handle General Chat Intent ---
     final_response = llm_response_text or (
         f"This is a general chat response from the LLM, based on your request: "
         f"'{request.message}'. Plan: {', '.join(plan)}"
     )
-    return ChatResponse(
+    final_response = _enforce_identity_response(request.message, final_response)
+    response_obj = ChatResponse(
         intent=intent,
         plan=plan,
         response=final_response,
     )
+    conversation_memory.add_message(session_id, "user", request.message)
+    conversation_memory.add_message(session_id, "assistant", response_obj.response)
+    return response_obj

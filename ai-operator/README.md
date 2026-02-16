@@ -73,11 +73,21 @@ copy .env.example .env
 Default values:
 ```env
 SANDBOX_ROOT=C:\ai-sandbox
+AI_OPERATOR_POLICY_MODE=strict
 DATABASE_URL=sqlite:///./ai_operator.db
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=gpt-oss:20b
 OLLAMA_TIMEOUT_SEC=120
 OLLAMA_FALLBACK_MODEL=llama3.1:8b
+```
+
+Policy mode:
+- `strict` (default): sandbox + whitelist + path-pattern checks enabled
+- `dev`: relaxed checks for local development (approval flow still applies)
+
+To enable dev mode:
+```powershell
+(Get-Content .env) -replace '^AI_OPERATOR_POLICY_MODE=.*$', 'AI_OPERATOR_POLICY_MODE=dev' | Set-Content .env
 ```
 
 Create sandbox folder if needed:

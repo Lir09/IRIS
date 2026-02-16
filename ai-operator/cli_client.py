@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,7 @@ def main() -> None:
     logs_dir = Path(__file__).resolve().parent / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    chat_session_id = str(uuid.uuid4())
     log_path = logs_dir / f"chat-{session_id}.jsonl"
 
     print("IRIS CLI chat")
@@ -70,6 +72,7 @@ def main() -> None:
             "base_url": BASE_URL,
             "cwd": current_cwd,
             "session_id": session_id,
+            "chat_session_id": chat_session_id,
         },
     )
 
@@ -122,7 +125,7 @@ def main() -> None:
                 append_log(log_path, "cwd_changed", {"cwd": current_cwd, "mode": "sandbox"})
                 continue
 
-            payload = {"message": message, "cwd": current_cwd}
+            payload = {"message": message, "cwd": current_cwd, "session_id": chat_session_id}
             append_log(log_path, "user_message", payload)
 
             try:

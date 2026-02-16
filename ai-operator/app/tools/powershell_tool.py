@@ -1,5 +1,6 @@
 import subprocess
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,19 @@ MAX_OUTPUT_CHARS = 8000
 
 class PowerShellTool:
     """A tool for safely executing PowerShell commands."""
+
+    def _normalize_command(self, command: str) -> str:
+        """
+        Expands cmd-style environment variables (e.g. %USERPROFILE%) so commands
+        behave consistently in PowerShell across different Windows machines.
+        """
+        normalized_command = os.path.expandvars(command)
+        if normalized_command != command:
+            logger.info(
+                "Expanded environment variables in command. "
+                f"original='{command}' normalized='{normalized_command}'"
+            )
+        return normalized_command
 
     def execute(
         self,
@@ -34,10 +48,11 @@ class PowerShellTool:
                 "ok": False,
             }
 
-        logger.info(f"Executing command: '{command}' in '{cwd}'")
+        normalized_command = self._normalize_command(command)
+        logger.info(f"Executing command: '{normalized_command}' in '{cwd}'")
         try:
             process = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", command],
+                ["powershell.exe", "-NoProfile", "-Command", normalized_command],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -66,7 +81,7 @@ class PowerShellTool:
             }
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Command '{command}' timed out after {timeout} seconds.")
+            logger.error(f"Command '{normalized_command}' timed out after {timeout} seconds.")
             return {
                 "returncode": -1,
                 "stdout": "",
@@ -82,7 +97,9 @@ class PowerShellTool:
                 "ok": False
             }
         except Exception as e:
-            logger.error(f"An unexpected error occurred while executing command '{command}': {e}")
+            logger.error(
+                f"An unexpected error occurred while executing command '{normalized_command}': {e}"
+            )
             return {
                 "returncode": -1,
                 "stdout": "",

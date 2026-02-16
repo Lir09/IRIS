@@ -71,3 +71,43 @@ def test_block_parent_traversal_in_command(policy_enforcer):
     )
     assert is_allowed is False
     assert "disallowed path pattern" in reason
+
+
+def test_allow_absolute_path_inside_sandbox(policy_enforcer):
+    target_file = policy_enforcer.sandbox_root / "greeting.txt"
+    is_allowed, reason = policy_enforcer.check_all(
+        f'echo hello > "{target_file}"',
+        policy_enforcer.sandbox_root,
+    )
+    assert is_allowed is True
+    assert "allowed" in reason
+
+
+def test_expand_env_var_and_block_outside_sandbox(policy_enforcer, monkeypatch):
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\test-user")
+    is_allowed, reason = policy_enforcer.check_all(
+        r'echo hello > %USERPROFILE%\Desktop\greeting.txt',
+        policy_enforcer.sandbox_root,
+    )
+    assert is_allowed is False
+    assert "disallowed path pattern" in reason
+
+
+def test_dev_mode_allows_non_whitelisted_command(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    policy = PolicyEnforcer(sandbox_root=str(sandbox), policy_mode="dev")
+    is_allowed, reason = policy.check_all("whoami", sandbox)
+    assert is_allowed is True
+    assert "dev mode" in reason
+
+
+def test_dev_mode_allows_outside_sandbox_path(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    policy = PolicyEnforcer(sandbox_root=str(sandbox), policy_mode="dev")
+    is_allowed, reason = policy.check_all("echo hi > C:\\Users\\someone\\Desktop\\a.txt", outside)
+    assert is_allowed is True
+    assert "dev mode" in reason

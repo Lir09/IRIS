@@ -1,0 +1,4 @@
+{"ts": "2026-02-16T20:06:03", "event": "session_start", "base_url": "http://127.0.0.1:8000", "cwd": "C:\\ai-sandbox", "session_id": "20260216-200603", "chat_session_id": "2493ac5d-2fe5-4144-a62a-1c3cc55df58b"}
+{"ts": "2026-02-16T20:06:05", "event": "health_ok", "status_code": 200}
+{"ts": "2026-02-16T20:06:11", "event": "user_message", "message": "너 누가 만들었어", "cwd": "C:\\ai-sandbox", "session_id": "2493ac5d-2fe5-4144-a62a-1c3cc55df58b"}
+{"ts": "2026-02-16T20:06:15", "event": "assistant_response", "intent": "chat", "plan": ["Acknowledge the identity question.", "Provide a short answer that 김가빈 created me."], "requires_approval": false, "approval_id": null, "proposed_command": null, "response": "저는 김가빈님이 만든 로컬 AI 운영자 IRIS입니다."}

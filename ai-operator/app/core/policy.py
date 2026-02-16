@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
+from typing import Literal
 
 load_dotenv()
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # --- Safety Configuration ---
 SANDBOX_ROOT = os.getenv("SANDBOX_ROOT", "C:\ai-sandbox")
+DEFAULT_POLICY_MODE = os.getenv("AI_OPERATOR_POLICY_MODE", "strict").strip().lower()
 ALLOWED_COMMAND_PREFIXES = [
     "git status",
     "git diff",
@@ -27,17 +29,22 @@ ALLOWED_COMMAND_PREFIXES = [
 
 # Block common sandbox-escape patterns in command arguments.
 DISALLOWED_COMMAND_PATTERNS = [
-    re.compile(r"[a-zA-Z]:\\"),
     re.compile(r"\\\\"),
     re.compile(r"\.\."),
 ]
+WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"[a-zA-Z]:\\[^\s\"'|><;]*")
 
 class PolicyEnforcer:
     """
     Enforces security policies for command execution.
     """
 
-    def __init__(self, sandbox_root: str = SANDBOX_ROOT, allowed_prefixes: list = None):
+    def __init__(
+        self,
+        sandbox_root: str = SANDBOX_ROOT,
+        allowed_prefixes: list = None,
+        policy_mode: Literal["strict", "dev"] | None = None,
+    ):
         try:
             self.sandbox_root = Path(sandbox_root).resolve()
             if not self.sandbox_root.exists():
@@ -48,7 +55,19 @@ class PolicyEnforcer:
             raise ValueError(f"Invalid SANDBOX_ROOT path: {sandbox_root}") from e
         
         self.allowed_prefixes = allowed_prefixes if allowed_prefixes is not None else ALLOWED_COMMAND_PREFIXES
-        logger.info(f"PolicyEnforcer initialized. Sandbox: '{self.sandbox_root}', Allowed Prefixes: {self.allowed_prefixes}")
+        resolved_mode = (policy_mode or DEFAULT_POLICY_MODE).strip().lower()
+        self.policy_mode: Literal["strict", "dev"] = "dev" if resolved_mode == "dev" else "strict"
+        logger.info(
+            "PolicyEnforcer initialized. "
+            f"mode='{self.policy_mode}' "
+            f"sandbox='{self.sandbox_root}' "
+            f"allowed_prefixes={self.allowed_prefixes}"
+        )
+        if self.policy_mode == "dev":
+            logger.warning(
+                "PolicyEnforcer is running in DEV mode. "
+                "Sandbox/path/allowlist checks are relaxed for local development."
+            )
 
 
     def is_command_allowed(self, command: str) -> bool:
@@ -64,12 +83,20 @@ class PolicyEnforcer:
         """
         Checks command string for absolute/traversal path patterns that could escape sandbox.
         """
-        normalized_command = command.strip()
+        normalized_command = os.path.expandvars(command.strip())
         for pattern in DISALLOWED_COMMAND_PATTERNS:
             if pattern.search(normalized_command):
                 logger.warning(
                     "Command denied by policy (disallowed path pattern): "
                     f"pattern='{pattern.pattern}' command='{command}'"
+                )
+                return True
+
+        for path_str in WINDOWS_ABSOLUTE_PATH_PATTERN.findall(normalized_command):
+            if not self.is_path_in_sandbox(path_str):
+                logger.warning(
+                    "Command denied by policy (absolute path outside sandbox): "
+                    f"path='{path_str}' command='{command}'"
                 )
                 return True
         return False
@@ -91,7 +118,10 @@ class PolicyEnforcer:
         """Runs all checks and returns a tuple (is_ok, reason)."""
         if cwd is None:
             return False, "Execution path (cwd) must be provided."
-        
+
+        if self.policy_mode == "dev":
+            return True, "Command is allowed (dev mode)."
+
         if not self.is_path_in_sandbox(cwd):
             return False, f"Execution path is outside the security sandbox. Allowed root: {self.sandbox_root}"
 

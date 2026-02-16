@@ -26,6 +26,7 @@ class ApprovalStatus(str, Enum):
 class ChatRequest(BaseModel):
     message: str
     cwd: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 # --- API Response Models ---
